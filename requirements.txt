@@ -1,0 +1,11 @@
+chromadb
+nltk
+numpy
+openai
+pdfplumber
+python-dotenv
+rank-bm25
+sentence-transformers
+streamlit
+torch
+torchvision
