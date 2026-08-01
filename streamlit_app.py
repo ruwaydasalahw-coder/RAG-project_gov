@@ -20,6 +20,9 @@ from __future__ import annotations
 
 import time
 from importlib import import_module
+import os
+import subprocess
+import streamlit as st
 
 import streamlit as st
 
@@ -32,6 +35,11 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+if st.button("🔨 إعادة بناء قاعدة البيانات (Rebuild Index)"):
+    st.info("جاري البناء، يرجى الانتظار...")
+    subprocess.run(["python", "05_create_chroma_store.py"], check=True)
+    st.success("تم بناء القاعدة بنجاح! قم بعمل Refresh للصفحة.")
 
 # -----------------------------------------------------------------------------
 # st.markdown patch: CommonMark terminates a raw-HTML block (e.g. <div>...)
