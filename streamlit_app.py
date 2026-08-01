@@ -23,6 +23,7 @@ from importlib import import_module
 
 import streamlit as st
 
+
 # =============================================================================
 # PAGE CONFIG (must be the first Streamlit call)
 # =============================================================================
