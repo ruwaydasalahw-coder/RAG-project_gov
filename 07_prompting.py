@@ -112,7 +112,13 @@ def evaluate_ground_truth():
         ok = all(keyword.lower() in answer_lower for keyword in case["expected_keywords"])
 
         status = "PASS" if ok else "FAIL"
-        print(f"[{status}] {case['question']}")
+
+        # ------------------ طباعة النتائج التفصيلية ------------------
+        print(f"[{status}] Question: {case['question']}")
+        print(f"👉 Expected Keywords: {case['expected_keywords']}")
+        print(f"🤖 Generated Answer: {answer}")
+        print("-" * 50)
+        # -------------------------------------------------------------
         if ok:
             passed += 1
 
