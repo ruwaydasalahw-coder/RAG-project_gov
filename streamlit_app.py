@@ -22,12 +22,7 @@ import time
 from importlib import import_module
 
 import streamlit as st
-import os
 
-# إنشاء ChromaDB تلقائياً على السيرفر إذا لم تكن موجودة
-if not os.path.exists("chroma_db") or not os.listdir("chroma_db"):
-    st.info("جاري إعداد قاعدة البيانات للمرة الأولى...")
-    os.system("python 05_create_chroma_store.py")
 
 # =============================================================================
 # PAGE CONFIG (must be the first Streamlit call)
