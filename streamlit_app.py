@@ -36,20 +36,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-if st.button("🔨 إعادة بناء قاعدة البيانات (Rebuild Index)"):
-    st.info("جاري بناء قاعدة البيانات والتأكد من الملفات...")
-    try:
-        # استدعاء ملف البناء كموديول داخلي مباشرة بدلاً من subprocess
-        import importlib
-        builder = importlib.import_module("05_create_chroma_store")
-        
-        # إذا كان الملف يحتوي على دالة main أو تنفيذ مباشر
-        if hasattr(builder, "main"):
-            builder.main()
-            
-        st.success("تم بناء القاعدة بنجاح! قم بعمل Refresh للصفحة.")
-    except Exception as e:
-        st.error(f"حدث خطأ أثناء البناء: {e}")
 
 # -----------------------------------------------------------------------------
 # st.markdown patch: CommonMark terminates a raw-HTML block (e.g. <div>...)
