@@ -16,14 +16,7 @@ existing, unmodified backend exactly as the original streamlit_app.py did:
 
 
 from __future__ import annotations
-import os
-import subprocess
 
-# التأكد من تشغيل بناء قاعدة البيانات إذا كانت غير موجودة على السيرفر
-if not os.path.exists("chroma_db") or len(os.listdir("chroma_db")) == 0:
-    st.warning("جاري إعداد وقراءة قاعدة البيانات للمرة الأولى... يرجى الانتظار ثواني.")
-    subprocess.run(["python", "05_create_chroma_store.py"])
-    st.rerun()
 
 import time
 from importlib import import_module
