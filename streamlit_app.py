@@ -22,6 +22,11 @@ import time
 from importlib import import_module
 
 import streamlit as st
+import os
+
+# التحقق من وجود chroma_db وبنائها تلقائياً إذا كانت مفقودة
+if not os.path.exists("chroma_db") or len(os.listdir("chroma_db")) == 0:
+    os.system("python 05_create_chroma_store.py")
 
 
 # =============================================================================
