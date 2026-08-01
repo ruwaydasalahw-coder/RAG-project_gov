@@ -1,9 +1,9 @@
 """
 streamlit_app_premium.py
-
+ 
 Knowledge Transfer Between Nations — Cross-Lingual RAG Framework
 Enterprise console frontend.
-
+ 
 IMPORTANT: This file only redesigns the presentation layer. It calls the
 existing, unmodified backend exactly as the original streamlit_app.py did:
     - import_module("07_prompting") for rag.answer_question(), rag.OPENROUTER_*
@@ -13,19 +13,33 @@ existing, unmodified backend exactly as the original streamlit_app.py did:
       embedding model name, hybrid-search alpha, etc). No pipeline, retrieval,
       embedding, or prompting logic is defined, changed, or duplicated here.
 """
-
-
+ 
+ 
 from __future__ import annotations
-
-
+ 
+# --- sqlite3 shim for Streamlit Cloud -------------------------------------
+# Streamlit Community Cloud's base image ships an old system sqlite3 that is
+# below the minimum version ChromaDB requires. pysqlite3-binary provides a
+# modern sqlite3 build; if it's installed (add `pysqlite3-binary` to
+# requirements.txt), swap it in for the stdlib module before chromadb is
+# imported anywhere. This is a no-op (safe to leave in) on machines where the
+# system sqlite3 is already new enough and pysqlite3 isn't installed.
+try:
+    __import__("pysqlite3")
+    import sys as _sys
+    _sys.modules["sqlite3"] = _sys.modules.pop("pysqlite3")
+except ImportError:
+    pass
+ 
 import time
 from importlib import import_module
 import os
 import subprocess
-
-
+ 
+import chromadb
+from chromadb.config import Settings as ChromaSettings
 import streamlit as st
-
+ 
 # =============================================================================
 # PAGE CONFIG (must be the first Streamlit call)
 # =============================================================================
@@ -35,8 +49,8 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
-
+ 
+ 
 # -----------------------------------------------------------------------------
 # st.markdown patch: CommonMark terminates a raw-HTML block (e.g. <div>...)
 # at the first blank/whitespace-only line, which breaks multi-line, indented
@@ -49,21 +63,21 @@ st.set_page_config(
 # regardless of how it's pretty-printed in the source.
 # -----------------------------------------------------------------------------
 _st_markdown = st.markdown
-
-
+ 
+ 
 def _flatten_html(body: str) -> str:
     lines = [line.strip() for line in body.split("\n")]
     return "\n".join(line for line in lines if line != "")
-
-
+ 
+ 
 def _patched_markdown(body, *args, **kwargs):
     if kwargs.get("unsafe_allow_html") and isinstance(body, str) and "<" in body:
         body = _flatten_html(body)
     return _st_markdown(body, *args, **kwargs)
-
-
+ 
+ 
 st.markdown = _patched_markdown
-
+ 
 # =============================================================================
 # DESIGN TOKENS
 # =============================================================================
@@ -84,7 +98,7 @@ SUCCESS = "#1F9D6C"
 SUCCESS_SOFT = "#E7F7EF"
 DANGER = "#C23B3B"
 DANGER_SOFT = "#FBEAEA"
-
+ 
 # Country / organization display metadata. Purely presentational (flag +
 # grouping label) — does not alter which countries exist; that still comes
 # entirely from the real backend data.
@@ -96,7 +110,7 @@ COUNTRY_META = {
     "un": {"flag": "https://flagcdn.com/w40/un.png", "label": "United Nations", "kind": "Organization"},
     "united nations": {"flag": "https://flagcdn.com/w40/un.png", "label": "United Nations", "kind": "Organization"},
 }
-
+ 
 FUTURE_DOMAINS = [
     ("💧", "Water Management"),
     ("🎓", "Education"),
@@ -104,15 +118,15 @@ FUTURE_DOMAINS = [
     ("⚡", "Energy"),
     ("🏥", "Healthcare"),
 ]
-
+ 
 NAV_ITEMS = [
     ("dashboard", "◆", "Dashboard"),
     ("ask", "◈", "Ask a Question"),
     ("sources", "◇", "Knowledge Sources"),
     ("pipeline", "◎", "Pipeline & System"),
 ]
-
-
+ 
+ 
 def country_meta(raw_name: str) -> dict:
     key = (raw_name or "").strip().lower()
     # Backend may send ISO-2 codes instead of full names; map them onto the
@@ -122,8 +136,8 @@ def country_meta(raw_name: str) -> dict:
     if key in COUNTRY_META:
         return COUNTRY_META[key]
     return {"flag": "🌐", "label": (raw_name or "Unknown").title(), "kind": "Source"}
-
-
+ 
+ 
 # -----------------------------------------------------------------------------
 # CHANGE: COUNTRY_META["flag"] values can now be either a plain emoji (e.g.
 # "🇪🇪") or an image URL (SVG/PNG, e.g. flagcdn.com or a logo URL). Every place
@@ -136,7 +150,7 @@ def _is_image_url(value: str) -> bool:
     """
     True if the flag/logo value is an image reference (a remote http(s) URL
     or a local file path) rather than an emoji/text.
-
+ 
     Detected by file extension rather than only an http(s) prefix, so this
     covers both remote URLs (e.g. flagcdn.com, static.cdnlogo.com) and local
     paths (e.g. "assets/oecd.png") the same way.
@@ -145,12 +159,12 @@ def _is_image_url(value: str) -> bool:
         return False
     lowered = value.strip().lower()
     return lowered.endswith((".png", ".jpg", ".jpeg", ".svg", ".webp"))
-
-
+ 
+ 
 def flag_markup(flag_value: str, size: str = "1em") -> str:
     """
     Return HTML for a COUNTRY_META['flag'] value.
-
+ 
     - Emoji/plain text (e.g. "🇪🇪", "🏛️") is returned unchanged, exactly as
       before.
     - Image URLs (SVG or PNG both work fine in an <img> tag) are wrapped in
@@ -160,8 +174,8 @@ def flag_markup(flag_value: str, size: str = "1em") -> str:
     if _is_image_url(flag_value):
         return f'<img src="{flag_value}" style="height:{size}; width:auto; vertical-align:middle;">'
     return flag_value
-
-
+ 
+ 
 # =============================================================================
 # GLOBAL CSS
 # =============================================================================
@@ -170,7 +184,7 @@ def inject_css():
         f"""
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,480;9..144,560;9..144,640&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
-
+ 
         :root {{
             --ink: {INK};
             --ink-2: {INK_2};
@@ -190,11 +204,11 @@ def inject_css():
             --danger: {DANGER};
             --danger-soft: {DANGER_SOFT};
         }}
-
+ 
         html, body, [class*="css"] {{
             font-family: 'Inter', -apple-system, sans-serif;
         }}
-
+ 
         /* ---------- base canvas ---------- */
         [data-testid="stAppViewContainer"] {{
             background: var(--paper);
@@ -212,7 +226,7 @@ def inject_css():
             padding-bottom: 4rem;
             max-width: 1180px;
         }}
-
+ 
         * {{
             scroll-behavior: smooth;
         }}
@@ -227,13 +241,13 @@ def inject_css():
                 transition-duration: 0.001ms !important;
             }}
         }}
-
+ 
         h1, h2, h3, .display-font {{
             font-family: 'Fraunces', Georgia, serif;
             color: var(--text);
             letter-spacing: -0.01em;
         }}
-
+ 
         /* ---------- sidebar ---------- */
         [data-testid="stSidebar"] {{
             background: linear-gradient(185deg, var(--ink) 0%, var(--ink-2) 100%);
@@ -249,7 +263,7 @@ def inject_css():
             border-color: var(--ink-line);
             margin: 1.1rem 0;
         }}
-
+ 
         .brand-row {{
             display: flex;
             align-items: center;
@@ -271,7 +285,7 @@ def inject_css():
             color: var(--brass);
             margin: 0.1rem 0 0 0;
         }}
-
+ 
         .nav-eyebrow {{
             font-size: 0.66rem;
             letter-spacing: 0.12em;
@@ -280,7 +294,7 @@ def inject_css():
             margin: 1.0rem 0 0.35rem 0.15rem;
             font-weight: 600;
         }}
-
+ 
         [data-testid="stSidebar"] .stButton > button {{
             width: 100%;
             text-align: left;
@@ -307,7 +321,7 @@ def inject_css():
             border-color: var(--brass);
             color: #FFFFFF;
         }}
-
+ 
         .domain-chip {{
             background: rgba(255,255,255,0.05);
             border: 1px solid var(--ink-line);
@@ -327,7 +341,7 @@ def inject_css():
             color: #9296C0;
             line-height: 1.3;
         }}
-
+ 
         .future-row {{
             display: flex;
             align-items: center;
@@ -336,7 +350,7 @@ def inject_css():
             color: #9296C0;
             padding: 0.28rem 0.15rem;
         }}
-
+ 
         .status-pill {{
             display: inline-flex;
             align-items: center;
@@ -354,7 +368,7 @@ def inject_css():
         .status-ok .status-dot {{ background: #3FE0A0; box-shadow: 0 0 6px #3FE0A0; }}
         .status-bad {{ background: rgba(194,59,59,0.15); color: #F0A3A3; }}
         .status-bad .status-dot {{ background: #E45B5B; }}
-
+ 
         /* ---------- animations ---------- */
         @keyframes fadeSlideUp {{
             from {{ opacity: 0; transform: translateY(10px); }}
@@ -376,7 +390,7 @@ def inject_css():
         .anim-in-4 {{ animation-delay: 0.26s; }}
         .mark-spin {{ animation: slowSpin 38s linear infinite; transform-origin: center; }}
         .mark-pulse {{ animation: pulseGlow 2.6s ease-in-out infinite; }}
-
+ 
         /* ---------- hero ---------- */
         .hero {{
             background: radial-gradient(120% 140% at 15% 0%, #1D2454 0%, var(--ink) 55%, #0B0E22 100%);
@@ -422,7 +436,7 @@ def inject_css():
             margin: 0;
             position: relative;
         }}
-
+ 
         /* ---------- section headers ---------- */
         .section-eyebrow {{
             font-family: 'IBM Plex Mono', monospace;
@@ -445,7 +459,7 @@ def inject_css():
             font-size: 0.92rem;
             margin: 0 0 1.1rem 0;
         }}
-
+ 
         /* ---------- stat cards ---------- */
         .stat-card {{
             background: var(--surface);
@@ -480,7 +494,7 @@ def inject_css():
             color: var(--muted);
             margin-top: 0.45rem;
         }}
-
+ 
         /* ---------- generic card ---------- */
         .card {{
             background: var(--surface);
@@ -492,7 +506,7 @@ def inject_css():
         .card:hover {{
             box-shadow: 0 14px 30px -16px rgba(16,20,43,0.16);
         }}
-
+ 
         /* ---------- country cards ---------- */
         .country-card {{
             background: var(--surface);
@@ -520,7 +534,7 @@ def inject_css():
             border-top: 1px dashed var(--line);
             padding-top: 0.5rem; margin-top: 0.15rem;
         }}
-
+ 
         /* ---------- pipeline timeline ---------- */
         .pipeline-wrap {{ position: relative; padding-left: 2px; }}
         .pipeline-step {{
@@ -573,7 +587,7 @@ def inject_css():
             padding: 0.08rem 0.4rem;
             margin-top: 0.35rem;
         }}
-
+ 
         /* ---------- badges / chips ---------- */
         .badge {{
             display: inline-flex;
@@ -588,7 +602,7 @@ def inject_css():
             margin: 0 0.3rem 0.3rem 0;
         }}
         .badge.gold {{ background: var(--brass-soft); color: var(--brass-deep); }}
-
+ 
         .example-chip {{
             display: inline-block;
             font-size: 0.82rem;
@@ -600,7 +614,7 @@ def inject_css():
             margin: 0 0.4rem 0.5rem 0;
             transition: all 0.15s ease;
         }}
-
+ 
         /* ---------- answer card ---------- */
         .answer-card {{
             background: linear-gradient(180deg, #FFFFFF 0%, #FCFBF7 100%);
@@ -621,7 +635,7 @@ def inject_css():
             font-weight: 600;
             margin-bottom: 0.7rem;
         }}
-
+ 
         .source-card {{
             background: var(--surface);
             border: 1px solid var(--line);
@@ -657,7 +671,7 @@ def inject_css():
             max-height: 6.2em;
             overflow: hidden;
         }}
-
+ 
         /* ---------- footer ---------- */
         .app-footer {{
             margin-top: 3rem;
@@ -671,7 +685,7 @@ def inject_css():
             flex-wrap: wrap;
             gap: 0.6rem;
         }}
-
+ 
         /* ---------- misc streamlit overrides ---------- */
         .stTextArea textarea {{
             border-radius: 12px !important;
@@ -717,8 +731,8 @@ def inject_css():
         """,
         unsafe_allow_html=True,
     )
-
-
+ 
+ 
 # =============================================================================
 # SIGNATURE SVG MARK — a meridian / great-circle emblem
 # (three nodes connected by arcing "knowledge routes", evoking cross-border
@@ -740,8 +754,8 @@ def brand_mark(size: int = 34, spin: bool = True, color: str = "#C6963E") -> str
         <circle cx="50" cy="50" r="4.2" fill="{color}"/>
     </svg>
     """
-
-
+ 
+ 
 # =============================================================================
 # BACKEND INTROSPECTION (read-only — no pipeline logic defined here)
 # =============================================================================
@@ -751,39 +765,66 @@ def load_rag():
     module. Raises RuntimeError if the Chroma store isn't built yet — the
     exact same failure mode the original frontend handled."""
     return import_module("07_prompting")
-
-
+ 
+ 
 @st.cache_data(show_spinner=False)
 def load_corpus_stats():
-    """Read-only introspection of the real, already-built corpus. Returns
-    counts only — never duplicates retrieval/embedding logic. Falls back to
-    an empty-but-valid shape if the corpus isn't built yet, so the Dashboard
-    and Knowledge Sources pages can still render a helpful empty state."""
+    """Read-only introspection of the real, already-built corpus — read
+    directly from the live Chroma collection (the same one retrieval uses),
+    not from the separate pickle-cache path. This guarantees the dashboard
+    numbers always match what the retriever can actually see."""
     try:
-        documents = import_module("01_documents").get_documents()
-        chunks = import_module("03_chunking").build_chunks()
+        store = import_module("05_create_chroma_store")
+ 
+        client = chromadb.PersistentClient(
+            path=str(store.DB_PATH),
+            settings=ChromaSettings(anonymized_telemetry=False),
+        )
+        collection = client.get_collection(store.COLLECTION_NAME)
+ 
+        total_chunks = collection.count()
+        if total_chunks == 0:
+            raise RuntimeError("Chroma collection exists but contains 0 chunks.")
+ 
+        result = collection.get(include=["metadatas"])
+        metadatas = result["metadatas"]
+ 
     except Exception as error:
         return {"ok": False, "error": str(error), "documents": [], "chunks": [], "by_country": {}}
-
+ 
     by_country = {}
-    for doc in documents:
-        key = (doc.get("country") or "unknown").strip().lower()
-        by_country.setdefault(key, {"documents": 0, "chunks": 0, "raw_name": doc.get("country", "Unknown")})
-        by_country[key]["documents"] += 1
-    for chunk in chunks:
-        key = (chunk.get("country") or "unknown").strip().lower()
-        by_country.setdefault(key, {"documents": 0, "chunks": 0, "raw_name": chunk.get("country", "Unknown")})
+    seen_document_ids = {}
+ 
+    for meta in metadatas:
+        country_raw = meta.get("country") or "Unknown"
+        key = country_raw.strip().lower()
+        by_country.setdefault(key, {"documents": 0, "chunks": 0, "raw_name": country_raw})
         by_country[key]["chunks"] += 1
-
+ 
+        doc_id = meta.get("document_id")
+        seen_document_ids.setdefault(key, set())
+        if doc_id and doc_id not in seen_document_ids[key]:
+            seen_document_ids[key].add(doc_id)
+            by_country[key]["documents"] += 1
+ 
+    # "documents" here is a lightweight list sized to the real document
+    # count, enough for anything downstream that only needs len(documents)
+    # or a country breakdown — no PDF re-parsing involved.
+    documents = [
+        {"country": data["raw_name"]}
+        for data in by_country.values()
+        for _ in range(data["documents"])
+    ]
+ 
     return {
         "ok": True,
         "error": None,
         "documents": documents,
-        "chunks": chunks,
+        "chunks": [None] * total_chunks,
         "by_country": by_country,
     }
-
-
+ 
+ 
 @st.cache_data(show_spinner=False)
 def load_system_config():
     """Read-only introspection of real configuration constants already
@@ -805,24 +846,28 @@ def load_system_config():
         config["alpha"] = getattr(vectors, "ALPHA", None)
     except Exception as error:
         config["error"] = str(error)
-
+ 
     try:
         retrieve = import_module("06_retrieve_context")
         config["country_boost"] = getattr(retrieve, "COUNTRY_BOOST", None)
     except Exception:
         pass
-
+ 
     try:
         rag = import_module("07_prompting")
         config["llm_model"] = getattr(rag, "OPENROUTER_MODEL", None)
-        config["api_key_set"] = bool(getattr(rag, "OPENROUTER_API_KEY", None))
+        config["api_key_set"] = bool(
+            getattr(rag, "API_KEY", None)
+            or getattr(rag, "OPENROUTER_API_KEY", None)
+            or getattr(rag, "GROQ_API_KEY", None)
+        )
         config["ground_truth_count"] = len(getattr(rag, "GROUND_TRUTH", []))
     except Exception:
         pass
-
+ 
     return config
-
-
+ 
+ 
 # =============================================================================
 # SESSION STATE
 # =============================================================================
@@ -830,14 +875,14 @@ def init_state():
     st.session_state.setdefault("page", "dashboard")
     st.session_state.setdefault("history", [])  # list of dicts: question, answer, sources, seconds
     st.session_state.setdefault("pending_question", None)
-
-
+ 
+ 
 def go_to(page_key: str, prefill_question: str | None = None):
     st.session_state["page"] = page_key
     if prefill_question is not None:
         st.session_state["pending_question"] = prefill_question
-
-
+ 
+ 
 # =============================================================================
 # SIDEBAR
 # =============================================================================
@@ -856,7 +901,7 @@ def render_sidebar(stats: dict, config: dict, rag_ok: bool):
             unsafe_allow_html=True,
         )
         st.markdown("<hr/>", unsafe_allow_html=True)
-
+ 
         st.markdown('<div class="nav-eyebrow">Console</div>', unsafe_allow_html=True)
         for key, icon, label in NAV_ITEMS:
             active = st.session_state["page"] == key
@@ -865,7 +910,7 @@ def render_sidebar(stats: dict, config: dict, rag_ok: bool):
             if st.button(f"{icon}   {label}", key=f"nav_{key}", use_container_width=True):
                 go_to(key)
                 st.rerun()
-
+ 
         st.markdown("<hr/>", unsafe_allow_html=True)
         st.markdown('<div class="nav-eyebrow">Current Domain</div>', unsafe_allow_html=True)
         st.markdown(
@@ -878,14 +923,14 @@ def render_sidebar(stats: dict, config: dict, rag_ok: bool):
             """,
             unsafe_allow_html=True,
         )
-
+ 
         st.markdown('<div class="nav-eyebrow">Future Domains</div>', unsafe_allow_html=True)
         future_html = "".join(
             f'<div class="future-row"><span>{icon}</span><span>{label}</span></div>'
             for icon, label in FUTURE_DOMAINS
         )
         st.markdown(future_html, unsafe_allow_html=True)
-
+ 
         st.markdown("<hr/>", unsafe_allow_html=True)
         st.markdown('<div class="nav-eyebrow">System Status</div>', unsafe_allow_html=True)
         if rag_ok:
@@ -908,8 +953,8 @@ def render_sidebar(stats: dict, config: dict, rag_ok: bool):
                 f'<div class="future-row">🤖 <span>{config["llm_model"]}</span></div>',
                 unsafe_allow_html=True,
             )
-
-
+ 
+ 
 # =============================================================================
 # SHARED UI PIECES
 # =============================================================================
@@ -925,8 +970,8 @@ def section_header(eyebrow: str, title: str, desc: str = ""):
         """,
         unsafe_allow_html=True,
     )
-
-
+ 
+ 
 def stat_card(label: str, value: str, sub: str = "", delay_class: str = ""):
     st.markdown(
         f"""
@@ -938,8 +983,8 @@ def stat_card(label: str, value: str, sub: str = "", delay_class: str = ""):
         """,
         unsafe_allow_html=True,
     )
-
-
+ 
+ 
 def country_card(raw_name: str, doc_count: int, chunk_count: int):
     meta = country_meta(raw_name)
     st.markdown(
@@ -953,8 +998,8 @@ def country_card(raw_name: str, doc_count: int, chunk_count: int):
         """,
         unsafe_allow_html=True,
     )
-
-
+ 
+ 
 def pipeline_timeline(highlight_last: bool = False):
     steps = [
         ("📄", "PDF Ingestion", "Government and institutional reports are parsed per country/organization.", "01_documents.py"),
@@ -980,8 +1025,8 @@ def pipeline_timeline(highlight_last: bool = False):
         """
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
-
-
+ 
+ 
 def render_footer(stats_ok: bool):
     st.markdown(
         f"""
@@ -992,8 +1037,8 @@ def render_footer(stats_ok: bool):
         """,
         unsafe_allow_html=True,
     )
-
-
+ 
+ 
 # =============================================================================
 # PAGE: DASHBOARD
 # =============================================================================
@@ -1012,14 +1057,14 @@ def render_dashboard(stats: dict, config: dict, rag_ok: bool):
         """,
         unsafe_allow_html=True,
     )
-
+ 
     st.write("")
     documents = stats.get("documents", [])
     chunks = stats.get("chunks", [])
     by_country = stats.get("by_country", {})
     n_countries = sum(1 for k in by_country if country_meta(k)["kind"] == "Country")
     n_orgs = sum(1 for k in by_country if country_meta(k)["kind"] != "Country")
-
+ 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         stat_card("Knowledge Sources", str(n_countries + n_orgs), f"{n_countries} countries · {n_orgs} organizations", "anim-in-1")
@@ -1030,12 +1075,12 @@ def render_dashboard(stats: dict, config: dict, rag_ok: bool):
     with c4:
         this_session = len(st.session_state["history"])
         stat_card("Questions Asked", str(this_session), "This session", "anim-in-4")
-
+ 
     st.write("")
     st.write("")
-
+ 
     left, right = st.columns([1.35, 1], gap="large")
-
+ 
     with left:
         section_header("Try It", "Ask anything", "Type a question or start from an example.")
         with st.form("dashboard_ask_form", clear_on_submit=False):
@@ -1049,7 +1094,7 @@ def render_dashboard(stats: dict, config: dict, rag_ok: bool):
         if submitted and q.strip():
             go_to("ask", prefill_question=q.strip())
             st.rerun()
-
+ 
         examples = [
             "How does Estonia's digital identity system work?",
             "What does the OECD recommend for digital government?",
@@ -1061,11 +1106,11 @@ def render_dashboard(stats: dict, config: dict, rag_ok: bool):
                 if st.button(ex, key=f"dash_ex_{ex}", use_container_width=True):
                     go_to("ask", prefill_question=ex)
                     st.rerun()
-
+ 
         st.write("")
         section_header("Overview", "How the pipeline works", "Seven stages, from raw PDFs to a cited answer.")
         pipeline_timeline()
-
+ 
     with right:
         section_header("Coverage", "Knowledge sources", "")
         if not by_country:
@@ -1093,7 +1138,7 @@ def render_dashboard(stats: dict, config: dict, rag_ok: bool):
                     """,
                     unsafe_allow_html=True,
                 )
-
+ 
         st.write("")
         section_header("Recent Activity", "Questions this session", "")
         if not st.session_state["history"]:
@@ -1112,8 +1157,8 @@ def render_dashboard(stats: dict, config: dict, rag_ok: bool):
                     """,
                     unsafe_allow_html=True,
                 )
-
-
+ 
+ 
 # =============================================================================
 # PAGE: ASK A QUESTION
 # =============================================================================
@@ -1135,13 +1180,13 @@ def run_query(rag, question: str):
         elapsed = time.time() - start
         status.update(label="Answer ready", state="complete", expanded=False)
     return answer, sources, elapsed
-
-
+ 
+ 
 def render_ask(rag, rag_ok: bool):
     section_header("Ask", "Ask a question", "Answers are grounded only in retrieved passages and cite every source used.")
-
+ 
     prefill = st.session_state.pop("pending_question", None) or ""
-
+ 
     with st.form("ask_form", clear_on_submit=False):
         question = st.text_area(
             "Question",
@@ -1158,7 +1203,7 @@ def render_ask(rag, rag_ok: bool):
                 '<div style="color:var(--muted); font-size:0.82rem; padding-top:0.6rem;">Answers cite sources like [Source 1] — expand them below.</div>',
                 unsafe_allow_html=True,
             )
-
+ 
     examples = [
         "How does Estonia's digital identity system work?",
         "What does the OECD recommend for digital government?",
@@ -1169,7 +1214,7 @@ def render_ask(rag, rag_ok: bool):
         "".join(f'<span class="example-chip">{e}</span>' for e in examples),
         unsafe_allow_html=True,
     )
-
+ 
     if not rag_ok:
         st.markdown(
             f"""
@@ -1184,16 +1229,16 @@ def render_ask(rag, rag_ok: bool):
             unsafe_allow_html=True,
         )
         return
-
+ 
     if submitted and question.strip():
         answer, sources, elapsed = run_query(rag, question.strip())
         st.session_state["history"].append(
             {"question": question.strip(), "answer": answer, "sources": sources, "seconds": elapsed}
         )
-
+ 
     if st.session_state["history"]:
         latest = st.session_state["history"][-1]
-
+ 
         st.write("")
         st.markdown(
             f"""
@@ -1204,7 +1249,7 @@ def render_ask(rag, rag_ok: bool):
             """,
             unsafe_allow_html=True,
         )
-
+ 
         if latest["sources"]:
             st.write("")
             section_header("Evidence", f"Retrieved sources ({len(latest['sources'])})", "")
@@ -1228,7 +1273,7 @@ def render_ask(rag, rag_ok: bool):
                     )
         else:
             st.info("No sources were retrieved above the relevance threshold for this question.")
-
+ 
     if len(st.session_state["history"]) > 1:
         st.write("")
         with st.expander(f"Previous questions this session ({len(st.session_state['history']) - 1})"):
@@ -1236,14 +1281,14 @@ def render_ask(rag, rag_ok: bool):
                 st.markdown(f"**{item['question']}**")
                 st.write(item["answer"])
                 st.markdown("---")
-
-
+ 
+ 
 # =============================================================================
 # PAGE: KNOWLEDGE SOURCES
 # =============================================================================
 def render_sources(stats: dict):
     section_header("Coverage", "Knowledge sources", "Every country and organization currently indexed, with live document and chunk counts.")
-
+ 
     by_country = stats.get("by_country", {})
     if not stats.get("ok"):
         st.markdown(
@@ -1256,7 +1301,7 @@ def render_sources(stats: dict):
             unsafe_allow_html=True,
         )
         return
-
+ 
     ordered = sorted(by_country.items(), key=lambda kv: -kv[1]["documents"])
     n_cols = 5
     rows = [ordered[i:i + n_cols] for i in range(0, len(ordered), n_cols)]
@@ -1265,17 +1310,17 @@ def render_sources(stats: dict):
         for col, (key, data) in zip(cols, row):
             with col:
                 country_card(data.get("raw_name", key), data["documents"], data["chunks"])
-
+ 
     st.write("")
     st.write("")
     section_header("Documents", "Full report index", "Every source document currently retrievable, grouped by source.")
-
+ 
     documents = stats.get("documents", [])
     grouped: dict[str, list] = {}
     for doc in documents:
         key = (doc.get("country") or "unknown").strip().lower()
         grouped.setdefault(key, []).append(doc)
-
+ 
     for key, docs in sorted(grouped.items(), key=lambda kv: -len(kv[1])):
         meta = country_meta(key)
         count_label = f"{meta['label']} — {len(docs)} report{'s' if len(docs) != 1 else ''}"
@@ -1299,18 +1344,18 @@ def render_sources(stats: dict):
                     """,
                     unsafe_allow_html=True,
                 )
-
-
+ 
+ 
 # =============================================================================
 # PAGE: PIPELINE & SYSTEM
 # =============================================================================
 def render_pipeline(stats: dict, config: dict, rag_ok: bool):
     section_header("Architecture", "Pipeline & system", "How a question becomes a grounded, cited answer — and the live configuration behind it.")
-
+ 
     left, right = st.columns([1.3, 1], gap="large")
     with left:
         pipeline_timeline(highlight_last=True)
-
+ 
     with right:
         st.markdown(
             f"""
@@ -1340,7 +1385,7 @@ def render_pipeline(stats: dict, config: dict, rag_ok: bool):
             for label, value in rows
         )
         st.markdown(rows_html + "</div>", unsafe_allow_html=True)
-
+ 
         st.write("")
         status_label = "All systems operational" if rag_ok else "Index not ready"
         status_cls = "status-ok" if rag_ok else "status-bad"
@@ -1357,18 +1402,18 @@ def render_pipeline(stats: dict, config: dict, rag_ok: bool):
             """,
             unsafe_allow_html=True,
         )
-
-
+ 
+ 
 # =============================================================================
 # MAIN
 # =============================================================================
 def main():
     inject_css()
     init_state()
-
+ 
     stats = load_corpus_stats()
     config = load_system_config()
-
+ 
     rag = None
     rag_ok = False
     try:
@@ -1376,7 +1421,7 @@ def main():
         rag_ok = True
     except Exception:
         rag_ok = False
-
+ 
     # Keep original secrets-handling behavior for deployed environments.
     if rag is not None:
         try:
@@ -1385,9 +1430,9 @@ def main():
             rag.OPENROUTER_MODEL = st.secrets.get("OPENROUTER_MODEL", rag.OPENROUTER_MODEL)
         except Exception:
             pass
-
+ 
     render_sidebar(stats, config, rag_ok)
-
+ 
     page = st.session_state["page"]
     if page == "dashboard":
         render_dashboard(stats, config, rag_ok)
@@ -1399,9 +1444,10 @@ def main():
         render_pipeline(stats, config, rag_ok)
     else:
         render_dashboard(stats, config, rag_ok)
-
+ 
     render_footer(stats.get("ok", False))
-
-
+ 
+ 
 if __name__ == "__main__":
     main()
+ 
