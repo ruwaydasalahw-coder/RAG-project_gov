@@ -13,6 +13,9 @@ existing, unmodified backend exactly as the original streamlit_app.py did:
       embedding model name, hybrid-search alpha, etc). No pipeline, retrieval,
       embedding, or prompting logic is defined, changed, or duplicated here.
 """
+
+
+from __future__ import annotations
 import os
 import subprocess
 
@@ -21,8 +24,6 @@ if not os.path.exists("chroma_db") or len(os.listdir("chroma_db")) == 0:
     st.warning("جاري إعداد وقراءة قاعدة البيانات للمرة الأولى... يرجى الانتظار ثواني.")
     subprocess.run(["python", "05_create_chroma_store.py"])
     st.rerun()
-
-from __future__ import annotations
 
 import time
 from importlib import import_module
